@@ -161,8 +161,8 @@ func (d Downloader) GetAndCache(w http.ResponseWriter, r *http.Request){
 			failedRequests.Inc()
 		} else {
 			log.Printf("Downloaded and cached %s", local_object)
-			totalCached.Inc()
 			serveImage(local_object, w)
+			totalCached.Inc()
 		}
 	}
 	cacheResponseTime.Observe(time.Since(now).Seconds())
