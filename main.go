@@ -4,10 +4,12 @@ import (
 	"context"
 	"log"
 	"io"
+	"io/ioutil"
 	"os"
 	"flag"
 	"fmt"
     "net/http"
+	"path/filepath"
 
     "github.com/gorilla/mux"
 	"github.com/aws/aws-sdk-go-v2/aws"
@@ -27,53 +29,102 @@ type BucketBasics struct {
 	S3Client *s3.Client
 }
 
-// DownloadFile gets an object from a bucket and stores it in a local file.
+type Downloader struct {
+	Cfg Configuration
+	Bucket BucketBasics
+}
+
+// Get object from S3
 func (basics BucketBasics) DownloadFile(bucketName string, objectKey string, fileName string) error {
 	result, err := basics.S3Client.GetObject(context.TODO(), &s3.GetObjectInput{
 		Bucket: aws.String(bucketName),
 		Key:    aws.String(objectKey),
 	})
 	if err != nil {
-		log.Printf("Couldn't get object %v:%v. Here's why: %v\n", bucketName, objectKey, err)
+		log.Printf("Couldn't get object %v:%v. -> %v\n", bucketName, objectKey, err)
 		return err
 	}
 	defer result.Body.Close()
 	file, err := os.Create(fileName)
 	if err != nil {
-		log.Printf("Couldn't create file %v. Here's why: %v\n", fileName, err)
+		log.Printf("Couldn't create file %v. -> %v\n", fileName, err)
 		return err
 	}
 	defer file.Close()
 	body, err := io.ReadAll(result.Body)
 	if err != nil {
-		log.Printf("Couldn't read object body from %v. Here's why: %v\n", objectKey, err)
+		log.Printf("Couldn't read object body from %v. -> %v\n", objectKey, err)
 	}
 	_, err = file.Write(body)
 	return err
 }
 
-func hello(w http.ResponseWriter, r *http.Request){
-	vars := mux.Vars(r)
-	object, ok := vars["object"]
-	if !ok {
-		log.Fatal("object missing")
+func checkPath(filePath string) bool {
+	_, err := os.Stat(filePath)
+	if err != nil {
+		return false
 	}
-
-	fmt.Fprintf(w, "holi %s", object)
+	return true
 }
 
-func ReturnLocalObject(object string){
+func checkAndCreateDir(filePath string, file bool) string {
 	
+	var path string
+	path = filePath
+
+	if file {
+		path = filepath.Dir(filePath)
+	} 
+
+	// log.Println("Checking if path %s exists", path)
+	if !checkPath(path){
+		log.Printf("Path %s doesn't exist, creating...", path)
+		err := os.MkdirAll(path, 0755)
+		if err != nil {
+			log.Fatal(err)
+		}		
+	}
+	return path
 }
 
-func GetObject(w http.ResponseWriter, r *http.Request){
+func serveImage(filePath string, w http.ResponseWriter){
+	buf, err := ioutil.ReadFile(filePath)
+	if err != nil {
+		log.Fatal(err)
+	}
+	w.Header().Set("Content-Type", "image/png")
+	w.Write(buf)
+}
+
+func (d Downloader) GetAndCache(w http.ResponseWriter, r *http.Request){
+
 	vars := mux.Vars(r)
 	object, ok := vars["object"]
 	if !ok {
-		log.Fatal("object missing")
+		log.Fatal("Could not process object, request might be wrong??")
 	}
 
-	fmt.Fprintf(w, "holi %s", object)
+	public_object := fmt.Sprintf("%s", object)
+	local_object := fmt.Sprintf("%s/%s", d.Cfg.Directory, object)
+
+	if checkPath(local_object){
+		log.Printf("Served : %s", local_object)
+		serveImage(local_object, w)
+	} else {
+		checkAndCreateDir(local_object, true)
+		log.Printf("File %s not detected at local cache", local_object)
+		dload := d.Bucket.DownloadFile(
+			d.Cfg.Bucket,
+			public_object,
+			local_object,
+		)
+		if dload != nil {
+			w.WriteHeader(http.StatusNotFound)
+		} else {
+			log.Printf("Downloaded and cached %s", local_object)
+			serveImage(local_object, w)
+		}
+	}
 }
 
 func main() {
@@ -86,9 +137,19 @@ func main() {
 	flag.StringVar(&conf.Region, "region", "eu-west-1", "Default AWS Region")
 	flag.Parse()
 
-	fmt.Println(conf)
+	// Init message
+	log.Printf("Starting clauganxo :)")
+	log.Printf("------------")
+	log.Printf("Local cache path -> %s", conf.Directory)
+	log.Printf("Listening on port -> %d", conf.Port)
+	log.Printf("AWS Profile -> %s", conf.AWSProfile)
+	log.Printf("AWS Bucket to be cached -> %s", conf.Bucket)
+	log.Printf("Configured AWS Region -> %s", conf.Region)
+	log.Printf("------------")
 
-	// Load the Shared AWS Configuration (~/.aws/config)
+	checkAndCreateDir(conf.Directory, false)
+
+	// Load AWS config from Profile
 	cfg, err := config.LoadDefaultConfig(
 		context.TODO(),
 		config.WithRegion(conf.Region),
@@ -98,30 +159,10 @@ func main() {
 		log.Fatal(err)
 	}
 
-    r := mux.NewRouter()
-	r.HandleFunc("/c/{object}", hello)
-	http.ListenAndServe(fmt.Sprintf(":%d", conf.Port), r)
-
-
-	// Create an Amazon S3 service client
 	client := BucketBasics{S3Client: s3.NewFromConfig(cfg)}
+	handlers := Downloader{Cfg: *conf, Bucket: client}
 
-	client.DownloadFile(
-		conf.Bucket,
-		"public_backup/profile-64f9ddc4a6ba925e9afd7148-yl2qMt8kAK42kAYkkUB7x",
-		"profile-64f9ddc4a6ba925e9afd7148-yl2qMt8kAK42kAYkkUB7x",
-	)
-	
-	// // Get the first page of results for ListObjectsV2 for a bucket
-	// output, err := client.ListObjectsV2(context.TODO(), &s3.ListObjectsV2Input{
-	// 	Bucket: aws.String("nooubox-s3-amplify152159-staging"),
-	// })
-	// if err != nil {
-	// 	log.Fatal(err)
-	// }
-
-	// log.Println("first page results:")
-	// for _, object := range output.Contents {
-	// 	log.Printf("key=%s size=%d", aws.ToString(object.Key), object.Size)
-	// }
+    r := mux.NewRouter()
+	r.HandleFunc("/c/{object:.*}", handlers.GetAndCache).Methods("GET")
+	http.ListenAndServe(fmt.Sprintf(":%d", conf.Port), r)
 }
