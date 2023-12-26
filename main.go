@@ -96,12 +96,23 @@ func checkAndCreateDir(filePath string, file bool) string {
 	return path
 }
 
-func serveImage(filePath string, w http.ResponseWriter){
+func getContentType(filePath string) string{
 	buf, err := ioutil.ReadFile(filePath)
 	if err != nil {
 		log.Fatal(err)
 	}
-	w.Header().Set("Content-Type", "image/png")
+	mimetype := http.DetectContentType(buf)
+
+	return mimetype
+}
+
+func serveContent(filePath string, w http.ResponseWriter){
+	mimetype := getContentType(filePath)
+	buf, err := ioutil.ReadFile(filePath)
+	if err != nil {
+		log.Fatal(err)
+	}
+	w.Header().Set("Content-Type", mimetype)
 	w.Write(buf)
 	servedCache.Inc()
 }
@@ -146,7 +157,7 @@ func (d Downloader) GetAndCache(w http.ResponseWriter, r *http.Request){
 
 	if checkPath(local_object){
 		log.Printf("Served : %s", local_object)
-		serveImage(local_object, w)
+		serveContent(local_object, w)
 	} else {
 		checkAndCreateDir(local_object, true)
 		log.Printf("File %s not detected at local cache", local_object)
@@ -161,7 +172,7 @@ func (d Downloader) GetAndCache(w http.ResponseWriter, r *http.Request){
 			failedRequests.Inc()
 		} else {
 			log.Printf("Downloaded and cached %s", local_object)
-			serveImage(local_object, w)
+			serveContent(local_object, w)
 			totalCached.Inc()
 		}
 	}
