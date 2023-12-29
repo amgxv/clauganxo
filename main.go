@@ -11,6 +11,7 @@ import (
     "net/http"
 	"path/filepath"
 	"time"
+	"regexp"
 
     "github.com/gorilla/mux"
 	"github.com/aws/aws-sdk-go-v2/aws"
@@ -27,6 +28,7 @@ type Configuration struct {
 	AWSProfile string
 	Bucket string
 	Region string
+	Regexp string
 }
 
 type BucketBasics struct {
@@ -70,10 +72,10 @@ var (
 
 func checkPath(filePath string) bool {
 	_, err := os.Stat(filePath)
-	if err != nil {
-		return false
+	if err == nil {
+		return true
 	}
-	return true
+	return false
 }
 
 func checkAndCreateDir(filePath string, file bool) string {
@@ -96,6 +98,11 @@ func checkAndCreateDir(filePath string, file bool) string {
 	return path
 }
 
+func checkAllowedObjects(object string, regex string) bool{
+	match, _ := regexp.Match(regex, []byte(object))
+	return match
+}
+
 func getContentType(filePath string) string{
 	buf, err := ioutil.ReadFile(filePath)
 	if err != nil {
@@ -114,6 +121,7 @@ func serveContent(filePath string, w http.ResponseWriter){
 	}
 	w.Header().Set("Content-Type", mimetype)
 	w.Write(buf)
+	log.Printf("[200] - Served %s", filePath)
 	servedCache.Inc()
 }
 
@@ -143,6 +151,30 @@ func (basics BucketBasics) DownloadFile(bucketName string, objectKey string, fil
 	return err
 }
 
+func (d Downloader) Serve(bucket_object string, local_object string, w http.ResponseWriter){
+	if checkPath(local_object){
+		serveContent(local_object, w)
+	} else {
+		checkAndCreateDir(local_object, true)
+		log.Printf("File %s not detected at local cache", local_object)
+		missCache.Inc()		
+		dload := d.Bucket.DownloadFile(
+			d.Cfg.Bucket,
+			bucket_object,
+			local_object,
+		)
+		if dload != nil {
+			log.Printf("[404] - File was not found at S3 Bucket")
+			w.WriteHeader(http.StatusNotFound)
+			failedRequests.Inc()
+		} else {
+			log.Printf("Downloaded and cached %s", local_object)
+			serveContent(local_object, w)
+			totalCached.Inc()
+		}
+	}		
+}
+
 func (d Downloader) GetAndCache(w http.ResponseWriter, r *http.Request){
 
 	now := time.Now()
@@ -152,30 +184,23 @@ func (d Downloader) GetAndCache(w http.ResponseWriter, r *http.Request){
 		log.Fatal("Could not process object, request might be wrong??")
 	}
 
-	public_object := fmt.Sprintf("%s", object)
+	bucket_object := fmt.Sprintf("%s", object)
 	local_object := fmt.Sprintf("%s/%s", d.Cfg.Directory, object)
 
-	if checkPath(local_object){
-		log.Printf("Served : %s", local_object)
-		serveContent(local_object, w)
-	} else {
-		checkAndCreateDir(local_object, true)
-		log.Printf("File %s not detected at local cache", local_object)
-		missCache.Inc()
-		dload := d.Bucket.DownloadFile(
-			d.Cfg.Bucket,
-			public_object,
-			local_object,
-		)
-		if dload != nil {
+	if d.Cfg.Regexp != "" {
+		switch checkAllowedObjects(bucket_object, d.Cfg.Regexp) {
+		case true:
+			log.Printf("Regex found for object %s", bucket_object)
+			d.Serve(bucket_object, local_object, w)
+		case false:
+			log.Printf("[404] - Regex FAILED for object %s", bucket_object)
 			w.WriteHeader(http.StatusNotFound)
 			failedRequests.Inc()
-		} else {
-			log.Printf("Downloaded and cached %s", local_object)
-			serveContent(local_object, w)
-			totalCached.Inc()
 		}
+	} else {
+		d.Serve(bucket_object, local_object, w)		
 	}
+
 	cacheResponseTime.Observe(time.Since(now).Seconds())
 }
 
@@ -187,6 +212,7 @@ func main() {
 	flag.StringVar(&conf.AWSProfile, "profile", "default", "AWS Profile to be used")
 	flag.StringVar(&conf.Bucket, "bucket", "", "Bucket to cache")
 	flag.StringVar(&conf.Region, "region", "eu-west-1", "Default AWS Region")
+	flag.StringVar(&conf.Regexp, "regexp", "", "Default regex to match")
 	flag.Parse()
 
 	// Init message
@@ -197,6 +223,7 @@ func main() {
 	log.Printf("AWS Profile -> %s", conf.AWSProfile)
 	log.Printf("AWS Bucket to be cached -> %s", conf.Bucket)
 	log.Printf("Configured AWS Region -> %s", conf.Region)
+	if conf.Regexp != "" {log.Printf("Regex -> %s", conf.Regexp)}
 	log.Printf("------------")
 
 	// Create local cache directory
