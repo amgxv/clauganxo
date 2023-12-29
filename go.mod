@@ -1,4 +1,4 @@
-module ganxo
+module clauganxo
 
 go 1.18
 
