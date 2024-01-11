@@ -143,11 +143,7 @@ func (basics BucketBasics) DownloadFile(bucketName string, objectKey string, fil
 		return err
 	}
 	defer file.Close()
-	body, err := io.ReadAll(result.Body)
-	if err != nil {
-		log.Printf("Couldn't read object body from %v. -> %v\n", objectKey, err)
-	}
-	_, err = file.Write(body)
+	_, err = io.Copy(file, result.Body)
 	return err
 }
 
