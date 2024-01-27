@@ -24,13 +24,13 @@ import (
 )
 
 type Configuration struct {
-	Directory   string
-	Port        int
-	AWSProfile  string
-	Bucket      string
-	Region      string
-	Regexp      string
-	ExpireDays 	int `toml:"expire_days"`
+	Directory   string 	`toml:"directory"`
+	Port        int 	`toml:"port"`
+	AWSProfile  string	`toml:"profile"` 
+	Bucket      string	`toml:"bucket"`
+	Region      string	`toml:"region"`
+	Regexp      string	`toml:"regexp"`
+	ExpireDays 	int 	`toml:"expire_days"`
 }
 
 type BucketBasics struct {
