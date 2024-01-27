@@ -2,33 +2,35 @@ package main
 
 import (
 	"context"
-	"log"
-	"io"
-	"io/ioutil"
-	"os"
 	"flag"
 	"fmt"
-    "net/http"
+	"io"
+	"io/ioutil"
+	"log"
+	"net/http"
+	"os"
 	"path/filepath"
-	"time"
 	"regexp"
-
-    "github.com/gorilla/mux"
+	"time"
+	
+	"github.com/BurntSushi/toml"
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
+	"github.com/gorilla/mux"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promauto"
-	"github.com/prometheus/client_golang/prometheus/promhttp"	
+	"github.com/prometheus/client_golang/prometheus/promhttp"
 )
 
 type Configuration struct {
-	Directory string
-	Port int
-	AWSProfile string
-	Bucket string
-	Region string
-	Regexp string
+	Directory   string
+	Port        int
+	AWSProfile  string
+	Bucket      string
+	Region      string
+	Regexp      string
+	ExpireDays 	int `toml:"expire_days"`
 }
 
 type BucketBasics struct {
@@ -36,39 +38,38 @@ type BucketBasics struct {
 }
 
 type Downloader struct {
-	Cfg Configuration
+	Cfg    Configuration
 	Bucket BucketBasics
 }
 
 var (
 	totalCached = promauto.NewCounter(prometheus.CounterOpts{
 		Namespace: "clauganxo",
-		Name: "total_cached",
-		Help: "The total number of cached objects",
+		Name:      "total_cached",
+		Help:      "The total number of cached objects",
 	})
 	servedCache = promauto.NewCounter(prometheus.CounterOpts{
 		Namespace: "clauganxo",
-		Name: "served_cache",
-		Help: "Total files served from cache",
+		Name:      "served_cache",
+		Help:      "Total files served from cache",
 	})
 	missCache = promauto.NewCounter(prometheus.CounterOpts{
 		Namespace: "clauganxo",
-		Name: "missed_cache",
-		Help: "Total files missed from cache",
+		Name:      "missed_cache",
+		Help:      "Total files missed from cache",
 	})
 	failedRequests = promauto.NewCounter(prometheus.CounterOpts{
 		Namespace: "clauganxo",
-		Name: "failed_requests",
-		Help: "Requests that failed to serve",
+		Name:      "failed_requests",
+		Help:      "Requests that failed to serve",
 	})
 	cacheResponseTime = promauto.NewSummary(prometheus.SummaryOpts{
-		Namespace: "clauganxo",
+		Namespace:  "clauganxo",
 		Name:       "cache_response_time",
 		Help:       "Duration of the login request.",
 		Objectives: map[float64]float64{0.5: 0.05, 0.9: 0.01, 0.99: 0.001},
 	})
 )
-
 
 func checkPath(filePath string) bool {
 	_, err := os.Stat(filePath)
@@ -79,31 +80,31 @@ func checkPath(filePath string) bool {
 }
 
 func checkAndCreateDir(filePath string, file bool) string {
-	
+
 	var path string
 	path = filePath
 
 	if file {
 		path = filepath.Dir(filePath)
-	} 
+	}
 
 	// log.Println("Checking if path %s exists", path)
-	if !checkPath(path){
+	if !checkPath(path) {
 		log.Printf("Path %s doesn't exist, creating...", path)
 		err := os.MkdirAll(path, 0755)
 		if err != nil {
 			log.Fatal(err)
-		}		
+		}
 	}
 	return path
 }
 
-func checkAllowedObjects(object string, regex string) bool{
+func checkAllowedObjects(object string, regex string) bool {
 	match, _ := regexp.Match(regex, []byte(object))
 	return match
 }
 
-func getContentType(filePath string) string{
+func getContentType(filePath string) string {
 	buf, err := ioutil.ReadFile(filePath)
 	if err != nil {
 		log.Fatal(err)
@@ -113,7 +114,7 @@ func getContentType(filePath string) string{
 	return mimetype
 }
 
-func serveContent(filePath string, w http.ResponseWriter){
+func serveContent(filePath string, w http.ResponseWriter) {
 	mimetype := getContentType(filePath)
 	buf, err := ioutil.ReadFile(filePath)
 	if err != nil {
@@ -124,7 +125,6 @@ func serveContent(filePath string, w http.ResponseWriter){
 	log.Printf("[200] - Served %s", filePath)
 	servedCache.Inc()
 }
-
 
 // Get object from S3
 func (basics BucketBasics) DownloadFile(bucketName string, objectKey string, fileName string) error {
@@ -151,13 +151,13 @@ func (basics BucketBasics) DownloadFile(bucketName string, objectKey string, fil
 	return err
 }
 
-func (d Downloader) Serve(bucket_object string, local_object string, w http.ResponseWriter){
-	if checkPath(local_object){
+func (d Downloader) Serve(bucket_object string, local_object string, w http.ResponseWriter) {
+	if checkPath(local_object) {
 		serveContent(local_object, w)
 	} else {
 		checkAndCreateDir(local_object, true)
 		log.Printf("File %s not detected at local cache", local_object)
-		missCache.Inc()		
+		missCache.Inc()
 		dload := d.Bucket.DownloadFile(
 			d.Cfg.Bucket,
 			bucket_object,
@@ -172,10 +172,24 @@ func (d Downloader) Serve(bucket_object string, local_object string, w http.Resp
 			serveContent(local_object, w)
 			totalCached.Inc()
 		}
-	}		
+	}
 }
 
-func (d Downloader) GetAndCache(w http.ResponseWriter, r *http.Request){
+func (d Downloader) Flush(local_object string, w http.ResponseWriter) {
+	if checkPath(local_object) {
+		err := os.Remove(local_object)
+		if err != nil {
+			fmt.Println(err)
+		}
+		log.Printf("FLUSH - Object Flushed %s", local_object)
+		w.WriteHeader(http.StatusOK)
+	} else {
+		log.Printf("FLUSH - Object not found, ignoring")
+		w.WriteHeader(http.StatusNotFound)
+	}
+}
+
+func (d Downloader) GetAndCache(w http.ResponseWriter, r *http.Request) {
 
 	now := time.Now()
 	vars := mux.Vars(r)
@@ -198,22 +212,77 @@ func (d Downloader) GetAndCache(w http.ResponseWriter, r *http.Request){
 			failedRequests.Inc()
 		}
 	} else {
-		d.Serve(bucket_object, local_object, w)		
+		d.Serve(bucket_object, local_object, w)
 	}
 
 	cacheResponseTime.Observe(time.Since(now).Seconds())
 }
 
+func CheckAndExpire(dir string, expire_days int) {
+	err := filepath.Walk(dir,
+		func(path string, info os.FileInfo, err error) error {
+			if err != nil {
+				return err
+			}
+			if !info.IsDir() {
+				current_date := time.Now()
+				date_file := info.ModTime()
+				days := time.Hour * time.Duration(24*expire_days)
+				expected_expire := date_file.Add(days)
+				if expected_expire.Before(current_date) {
+					fmt.Println(path, current_date, date_file, expected_expire)
+				}
+			}
+			return nil
+		})
+	if err != nil {
+		log.Println(err)
+	}
+}
+
+func RunCheckAndExpire(conf *Configuration, t int) {
+	for range time.Tick(time.Hour * time.Duration(t)) {
+		CheckAndExpire(fmt.Sprintf("%s/", conf.Directory), conf.ExpireDays)
+	}
+}
+
+func (d Downloader) FlushObject(w http.ResponseWriter, r *http.Request) {
+	vars := mux.Vars(r)
+	object, ok := vars["object"]
+	if !ok {
+		log.Fatal("Could not process object, request might be wrong??")
+	}
+
+	bucket_object := fmt.Sprintf("%s", object)
+	local_object := fmt.Sprintf("%s/%s", d.Cfg.Directory, object)
+
+	if d.Cfg.Regexp != "" {
+		switch checkAllowedObjects(bucket_object, d.Cfg.Regexp) {
+		case true:
+			log.Printf("FLUSH - Regex found for object %s", bucket_object)
+			d.Flush(local_object, w)
+		case false:
+			log.Printf("FLUSH - [404] - Regex FAILED for object %s", bucket_object)
+			w.WriteHeader(http.StatusNotFound)
+		}
+	} else {
+		d.Flush(local_object, w)
+	}
+}
+
 func main() {
 
-	conf := new(Configuration)
-	flag.StringVar(&conf.Directory, "dir", "cache", "Dir where things are cached")
-	flag.IntVar(&conf.Port, "p", 8000, "Port where HTTP port will listen")
-	flag.StringVar(&conf.AWSProfile, "profile", "default", "AWS Profile to be used")
-	flag.StringVar(&conf.Bucket, "bucket", "", "Bucket to cache")
-	flag.StringVar(&conf.Region, "region", "eu-west-1", "Default AWS Region")
-	flag.StringVar(&conf.Regexp, "regexp", "", "Default regex to match")
+	// Read TOML file for config
+	var configFile string 
+	flag.StringVar(&configFile, "config", "config.toml", "TOML Config file to pass to clauganxo")
 	flag.Parse()
+
+	conf := new(Configuration)
+	_, err := toml.DecodeFile(configFile, &conf)
+	if err != nil {
+		log.Printf("Config file %s not detected", configFile)
+		panic(err)
+	}
 
 	// Init message
 	log.Printf("Starting clauganxo :)")
@@ -223,11 +292,21 @@ func main() {
 	log.Printf("AWS Profile -> %s", conf.AWSProfile)
 	log.Printf("AWS Bucket to be cached -> %s", conf.Bucket)
 	log.Printf("Configured AWS Region -> %s", conf.Region)
-	if conf.Regexp != "" {log.Printf("Regex -> %s", conf.Regexp)}
+	if conf.Regexp != "" {
+		log.Printf("Regex -> %s", conf.Regexp)
+	}
+	if conf.ExpireDays > 0 {
+		log.Printf("Days to expire files -> %d", conf.ExpireDays)
+	}
 	log.Printf("------------")
 
 	// Create local cache directory
 	checkAndCreateDir(conf.Directory, false)
+
+	if conf.ExpireDays > 0 {
+		// run goroutine every hour
+		go RunCheckAndExpire(conf, 1)
+	}
 
 	// Load AWS config from Profile
 	cfg, err := config.LoadDefaultConfig(
@@ -242,8 +321,9 @@ func main() {
 	client := BucketBasics{S3Client: s3.NewFromConfig(cfg)}
 	handlers := Downloader{Cfg: *conf, Bucket: client}
 
-    r := mux.NewRouter()
+	r := mux.NewRouter()
 	r.HandleFunc("/c/{object:.*}", handlers.GetAndCache).Methods("GET")
+	r.HandleFunc("/flush/{object:.*}", handlers.FlushObject).Methods("DELETE")
 	r.Handle("/metrics", promhttp.Handler())
 	http.ListenAndServe(fmt.Sprintf(":%d", conf.Port), r)
 }
