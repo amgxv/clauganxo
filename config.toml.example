@@ -1,0 +1,7 @@
+directory = "clauganxo_cache"
+port = 8080
+profile = "my_aws_profile"
+bucket = "my_aws_bucket"
+region = "eu-central-1"
+regexp = "s3_path\\*"
+expire_days = 30
