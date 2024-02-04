@@ -1,4 +1,4 @@
-module clauganxo
+module github.com/amgxv/clauganxo
 
 go 1.18
 
