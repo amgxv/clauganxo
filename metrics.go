@@ -6,7 +6,7 @@ import (
 )
 
 var (
-	totalCached = promauto.NewCounter(prometheus.CounterOpts{
+	totalCached = promauto.NewGauge(prometheus.GaugeOpts{
 		Namespace: "clauganxo",
 		Name:      "total_cached",
 		Help:      "The total number of cached objects",

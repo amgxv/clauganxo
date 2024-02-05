@@ -149,6 +149,7 @@ func (d Downloader) Flush(local_object string, w http.ResponseWriter) {
 		}
 		log.Printf("FLUSH - Object Flushed %s", local_object)
 		w.WriteHeader(http.StatusOK)
+		totalCached.Dec()
 	} else {
 		log.Printf("FLUSH - Object not found, ignoring")
 		w.WriteHeader(http.StatusNotFound)
@@ -199,6 +200,7 @@ func CheckAndExpire(dir string, expire_days int) {
 					// fmt.Println(path, current_date, date_file, expected_expire)
 					log.Printf("Expiring object -> %s [EXPECTED EXPIRE DATE : %s]", path, expected_expire)
 					os.Remove(path)
+					totalCached.Dec()
 				}
 			}
 			return nil
@@ -236,4 +238,22 @@ func (d Downloader) FlushObject(w http.ResponseWriter, r *http.Request) {
 	} else {
 		d.Flush(local_object, w)
 	}
+}
+
+func countCached(dir string) {
+	count := 0
+	err := filepath.Walk(dir, func(path string, info os.FileInfo, err error) error {
+		if err != nil {
+			return err
+		}
+		if !info.IsDir() {
+			count++
+		}
+		return nil
+	})
+
+	if err != nil {
+		log.Println(err)
+	}
+	totalCached.Add(float64(count))
 }

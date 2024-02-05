@@ -27,6 +27,9 @@ func main() {
 	client := BucketBasics{S3Client: s3.NewFromConfig(s3_cfg)}
 	handlers := Downloader{Cfg: *conf, Bucket: client}
 
+	//initialize metrics
+	countCached(conf.Directory)
+
 	r := mux.NewRouter()
 	r.HandleFunc("/c/{object:.*}", handlers.GetAndCache).Methods("GET")
 	r.HandleFunc("/flush/{object:.*}", handlers.FlushObject).Methods("DELETE")
