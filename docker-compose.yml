@@ -1,0 +1,11 @@
+version: '3.7'
+services:
+  clauganxo:
+    image: clauganxo
+    ports:
+      - 8001:8001
+    volumes:
+      - ./config.toml:/config.toml
+      - ./cache:/cache
+      - /home/techxv/.aws/credentials:/root/.aws/credentials
+
