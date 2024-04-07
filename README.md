@@ -24,6 +24,8 @@ That's it!
 
 All objects are served from /c path
 
+You can also manually flush an object by sending a DELETE request to ```http://yourclauganxoservice.com/flush/object.png``` and the file will be deleted from your disk, just in case you don't want to use autoflush.
+
 ### Configuration 
 
 * ```directory``` -> Where your objects will be stored
