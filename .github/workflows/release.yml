@@ -1,0 +1,40 @@
+name: Release
+
+on:
+  release:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        arch: ['amd64', 'arm64']
+        os: ['linux']
+
+    steps:
+    - uses: actions/checkout@v3
+
+    - name: Prepare build
+      run: |
+        echo "GOARCH=${{ matrix.arch }}" >>${GITHUB_ENV}
+        echo "GOOS=${{ matrix.os }}" >>${GITHUB_ENV}
+        if [[ ! -z "${{ matrix.goarm }}" ]]; then
+          echo "GOARM=${{ matrix.goarm }}" >>${GITHUB_ENV}
+        fi
+
+        echo "EXEC_NAME=clauganxo-${{ matrix.os }}-${{ matrix.arch }}${{ matrix.goarm }}" >>${GITHUB_ENV}
+
+    - name: Set up Go
+      uses: actions/setup-go@v4
+      with:
+        go-version: '1.20'
+
+    - name: Build
+      run: |
+        go get -v
+        go build -o ${EXEC_NAME} -v
+
+    - name: Upload to release
+      uses: svenstaro/upload-release-action@2.7.0
+      with:
+        file: ${{ env.EXEC_NAME }}
