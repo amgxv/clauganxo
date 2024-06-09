@@ -8,4 +8,4 @@ FROM alpine
 
 COPY --from=builder /app/clauganxo /usr/local/bin/clauganxo
 
-RUN [ "clauganxo" ]
+CMD [ "clauganxo" ]
